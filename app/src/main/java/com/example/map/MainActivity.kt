@@ -1,5 +1,6 @@
 package com.example.map
 
+import android.content.Context
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -7,23 +8,31 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -34,16 +43,19 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import com.example.map.ui.theme.MapTheme
+import org.json.JSONArray
+import org.json.JSONObject
 import kotlin.math.roundToInt
 
 data class MapPoint(
-    val x: Float, // Normalized 0.0 to 1.0 (relative to image width)
-    val y: Float, // Normalized 0.0 to 1.0 (relative to image height)
+    val x: Float,
+    val y: Float,
     val title: String,
     val description: String
 )
@@ -64,17 +76,77 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+private const val PREFS_NAME = "map_prefs"
+private const val POINTS_KEY = "saved_points"
+
+fun savePointsToPrefs(context: Context, points: List<MapPoint>) {
+    val array = JSONArray()
+    points.forEach { point ->
+        val obj = JSONObject()
+        obj.put("x", point.x.toDouble())
+        obj.put("y", point.y.toDouble())
+        obj.put("title", point.title)
+        obj.put("description", point.description)
+        array.put(obj)
+    }
+    context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        .edit()
+        .putString(POINTS_KEY, array.toString())
+        .apply()
+}
+
+fun loadPointsFromPrefs(context: Context): List<MapPoint> {
+    val jsonString = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        .getString(POINTS_KEY, null) ?: return emptyList()
+
+    return try {
+        val array = JSONArray(jsonString)
+        val list = mutableListOf<MapPoint>()
+        for (i in 0 until array.length()) {
+            val obj = array.getJSONObject(i)
+            list.add(
+                MapPoint(
+                    x = obj.getDouble("x").toFloat(),
+                    y = obj.getDouble("y").toFloat(),
+                    title = obj.getString("title"),
+                    description = obj.getString("description")
+                )
+            )
+        }
+        list
+    } catch (e: Exception) {
+        emptyList()
+    }
+}
+
+fun getDefaultPoints() = listOf(
+    MapPoint(0.5f, 0.5f, "Одна из точек выброса энергии", "Нужна для выброса избыточной энергии."),
+    MapPoint(0.5f, 0.38f, "Солнце", "Ну не совсем солнце, божество, несущее непосредственно источник света. Как Ра, да, я банален."),
+    MapPoint(0.85f, 0.6f, "Другая точка выброса энергии", "Но в профиль!"),
+    MapPoint(0.2f, 0.6f, "Острова полуночные", "Я обожаю летающие острова"),
+    MapPoint(x = 0.8f, y = 0.4f, title = "Город Вечного Солнца", description = "Технически правда, но на практике как с Британской Империей")
+)
+
 @Composable
 fun InteractiveMap(modifier: Modifier = Modifier) {
-    val points = listOf(
-        MapPoint(0.5f, 0.5f, "Одна из точек выброса энергии", "Нужна для выброса избыточной энергии."),
-        MapPoint(0.5f, 0.38f, "Солнце", "Ну не совсем солнце, божество, несущее непосредственно источник света. Как Ра, да, я банален."),
-        MapPoint(0.85f, 0.6f, "Другая точка выброса энергии", "Но в профиль!"),
-        MapPoint(0.2f, 0.6f, "Острова полуночные", "Я обожаю летающие острова"),
-        MapPoint(x= 0.8f, y=0.4f, title="Город Вечного Солнца", description = "Технически правда, но на практике как с Британской Империей")
-    )
+    val context = LocalContext.current
+    val points = remember { mutableStateListOf<MapPoint>() }
+
+    LaunchedEffect(Unit) {
+        val loaded = loadPointsFromPrefs(context)
+        if (loaded.isEmpty()) {
+            points.addAll(getDefaultPoints())
+        } else {
+            points.addAll(loaded)
+        }
+    }
 
     var selectedPoint by remember { mutableStateOf<MapPoint?>(null) }
+    var showAddDialog by remember { mutableStateOf(false) }
+    var pendingLocation by remember { mutableStateOf<Offset?>(null) }
+    
+    var newPointTitle by remember { mutableStateOf("") }
+    var newPointDescription by remember { mutableStateOf("") }
 
     Surface(
         modifier = modifier.fillMaxSize(),
@@ -91,13 +163,28 @@ fun InteractiveMap(modifier: Modifier = Modifier) {
                 modifier = Modifier
                     .fillMaxSize()
                     .pointerInput(Unit) {
+                        detectTapGestures(
+                            onLongPress = { tapOffset ->
+                                val centerX = maxWidthPx / 2
+                                val centerY = maxHeightPx / 2
+                                val x = (tapOffset.x - offset.x - centerX) / scale + centerX
+                                val y = (tapOffset.y - offset.y - centerY) / scale + centerY
+                                
+                                val relX = x / maxWidthPx
+                                val relY = y / maxHeightPx
+                                
+                                if (relX in 0f..1f && relY in 0f..1f) {
+                                    pendingLocation = Offset(relX, relY)
+                                    showAddDialog = true
+                                }
+                            }
+                        )
+                    }
+                    .pointerInput(Unit) {
                         detectTransformGestures { _, pan, zoom, _ ->
                             val newScale = (scale * zoom).coerceIn(1f, 5f)
-                            
-                            // Calculate limits to keep the image within view bounds
                             val extraWidth = (newScale - 1) * maxWidthPx
                             val extraHeight = (newScale - 1) * maxHeightPx
-                            
                             val maxX = extraWidth / 2
                             val maxY = extraHeight / 2
                             
@@ -160,6 +247,60 @@ fun InteractiveMap(modifier: Modifier = Modifier) {
             confirmButton = {
                 TextButton(onClick = { selectedPoint = null }) {
                     Text("Закрыть")
+                }
+            }
+        )
+    }
+
+    if (showAddDialog) {
+        AlertDialog(
+            onDismissRequest = { 
+                showAddDialog = false
+                newPointTitle = ""
+                newPointDescription = ""
+            },
+            title = { Text("Добавить новую точку") },
+            text = {
+                Column {
+                    OutlinedTextField(
+                        value = newPointTitle,
+                        onValueChange = { newPointTitle = it },
+                        label = { Text("Название") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = newPointDescription,
+                        onValueChange = { newPointDescription = it },
+                        label = { Text("Описание") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val loc = pendingLocation
+                        if (loc != null && newPointTitle.isNotBlank()) {
+                            val newPoint = MapPoint(loc.x, loc.y, newPointTitle, newPointDescription)
+                            points.add(newPoint)
+                            savePointsToPrefs(context, points)
+                        }
+                        showAddDialog = false
+                        newPointTitle = ""
+                        newPointDescription = ""
+                    }
+                ) {
+                    Text("Добавить")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { 
+                    showAddDialog = false
+                    newPointTitle = ""
+                    newPointDescription = ""
+                }) {
+                    Text("Отмена")
                 }
             }
         )
