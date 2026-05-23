@@ -37,14 +37,22 @@ jobs:
         name: app-debug
         path: app/build/outputs/apk/debug/app-debug.apk
 
-    # Firebase Test Lab (Requires FIREBASE_SERVICE_ACCOUNT secret)
-    # This step is prepared but will only run if the secret is provided.
-    - name: Run UI Tests on Firebase Test Lab
-      if: env.HAS_SECRET == 'true'
-      uses: asyrosse/firebase-test-lab-action@v1.2
+    # Авторизация в Google Cloud (Firebase)
+    - name: Authenticate to Google Cloud
+      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      uses: google-github-actions/auth@v2
       with:
-        arg-package: "app/build/outputs/apk/debug/app-debug.apk"
-        arg-test: "app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk"
-      env:
-        SERVICE_ACCOUNT_ADDRESS: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
-        HAS_SECRET: ${{ secrets.FIREBASE_SERVICE_ACCOUNT != '' }}
+        credentials_json: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+
+    - name: Set up Cloud SDK
+      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      uses: google-github-actions/setup-gcloud@v2
+
+    - name: Run UI Tests on Firebase Test Lab
+      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      run: |
+        gcloud firebase test android run \
+          --type instrumentation \
+          --app app/build/outputs/apk/debug/app-debug.apk \
+          --test app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk \
+          --device model=pixel5,version=30,locale=ru,orientation=portrait
