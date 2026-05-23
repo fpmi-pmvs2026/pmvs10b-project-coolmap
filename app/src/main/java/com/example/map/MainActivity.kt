@@ -10,32 +10,10 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.mutableStateListOf
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
@@ -45,9 +23,11 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.core.content.edit
 import com.example.map.ui.theme.MapTheme
 import org.json.JSONArray
 import org.json.JSONObject
@@ -82,17 +62,17 @@ private const val POINTS_KEY = "saved_points"
 fun savePointsToPrefs(context: Context, points: List<MapPoint>) {
     val array = JSONArray()
     points.forEach { point ->
-        val obj = JSONObject()
-        obj.put("x", point.x.toDouble())
-        obj.put("y", point.y.toDouble())
-        obj.put("title", point.title)
-        obj.put("description", point.description)
+        val obj = JSONObject().apply {
+            put("x", point.x.toDouble())
+            put("y", point.y.toDouble())
+            put("title", point.title)
+            put("description", point.description)
+        }
         array.put(obj)
     }
-    context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        .edit()
-        .putString(POINTS_KEY, array.toString())
-        .apply()
+    context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit {
+        putString(POINTS_KEY, array.toString())
+    }
 }
 
 fun loadPointsFromPrefs(context: Context): List<MapPoint> {
@@ -101,19 +81,15 @@ fun loadPointsFromPrefs(context: Context): List<MapPoint> {
 
     return try {
         val array = JSONArray(jsonString)
-        val list = mutableListOf<MapPoint>()
-        for (i in 0 until array.length()) {
+        List(array.length()) { i ->
             val obj = array.getJSONObject(i)
-            list.add(
-                MapPoint(
-                    x = obj.getDouble("x").toFloat(),
-                    y = obj.getDouble("y").toFloat(),
-                    title = obj.getString("title"),
-                    description = obj.getString("description")
-                )
+            MapPoint(
+                x = obj.getDouble("x").toFloat(),
+                y = obj.getDouble("y").toFloat(),
+                title = obj.getString("title"),
+                description = obj.getString("description")
             )
         }
-        list
     } catch (e: Exception) {
         emptyList()
     }
@@ -124,7 +100,7 @@ fun getDefaultPoints() = listOf(
     MapPoint(0.5f, 0.38f, "Солнце", "Ну не совсем солнце, божество, несущее непосредственно источник света. Как Ра, да, я банален."),
     MapPoint(0.85f, 0.6f, "Другая точка выброса энергии", "Но в профиль!"),
     MapPoint(0.2f, 0.6f, "Острова полуночные", "Я обожаю летающие острова"),
-    MapPoint(x = 0.8f, y = 0.4f, title = "Город Вечного Солнца", description = "Технически правда, но на практике как с Британской Империей")
+    MapPoint(0.8f, 0.4f, "Город Вечного Солнца", "Технически правда, но на практике как с Британской Империей")
 )
 
 @Composable
@@ -149,7 +125,7 @@ fun InteractiveMap(modifier: Modifier = Modifier) {
     var newPointDescription by remember { mutableStateOf("") }
 
     Surface(
-        modifier = modifier.fillMaxSize(),
+        modifier = modifier.fillMaxSize().testTag("map_surface"),
         color = MaterialTheme.colorScheme.background
     ) {
         BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
@@ -228,7 +204,8 @@ fun InteractiveMap(modifier: Modifier = Modifier) {
                                 }
                                 .size(markerSize)
                                 .clip(CircleShape)
-                                .background(Color.Yellow.copy(alpha = 0.6f))
+                                .background(Color.Yellow.copy(alpha = 0.7f))
+                                .testTag("marker_${point.title}")
                                 .clickable {
                                     selectedPoint = point
                                 }
@@ -239,6 +216,7 @@ fun InteractiveMap(modifier: Modifier = Modifier) {
         }
     }
 
+    // Просмотр точки
     selectedPoint?.let { point ->
         AlertDialog(
             onDismissRequest = { selectedPoint = null },
@@ -248,10 +226,22 @@ fun InteractiveMap(modifier: Modifier = Modifier) {
                 TextButton(onClick = { selectedPoint = null }) {
                     Text("Закрыть")
                 }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        points.remove(point)
+                        savePointsToPrefs(context, points)
+                        selectedPoint = null
+                    }
+                ) {
+                    Text("Удалить", color = Color.Red)
+                }
             }
         )
     }
 
+    // Добавление точки
     if (showAddDialog) {
         AlertDialog(
             onDismissRequest = { 
@@ -259,26 +249,27 @@ fun InteractiveMap(modifier: Modifier = Modifier) {
                 newPointTitle = ""
                 newPointDescription = ""
             },
-            title = { Text("Добавить новую точку") },
+            title = { Text("Новая локация") },
             text = {
                 Column {
                     OutlinedTextField(
                         value = newPointTitle,
                         onValueChange = { newPointTitle = it },
                         label = { Text("Название") },
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier.fillMaxWidth().testTag("input_title")
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     OutlinedTextField(
                         value = newPointDescription,
                         onValueChange = { newPointDescription = it },
                         label = { Text("Описание") },
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier.fillMaxWidth().testTag("input_desc")
                     )
                 }
             },
             confirmButton = {
                 TextButton(
+                    modifier = Modifier.testTag("btn_save"),
                     onClick = {
                         val loc = pendingLocation
                         if (loc != null && newPointTitle.isNotBlank()) {
@@ -291,15 +282,11 @@ fun InteractiveMap(modifier: Modifier = Modifier) {
                         newPointDescription = ""
                     }
                 ) {
-                    Text("Добавить")
+                    Text("Сохранить")
                 }
             },
             dismissButton = {
-                TextButton(onClick = { 
-                    showAddDialog = false
-                    newPointTitle = ""
-                    newPointDescription = ""
-                }) {
+                TextButton(onClick = { showAddDialog = false }) {
                     Text("Отмена")
                 }
             }
